@@ -13,12 +13,15 @@ export default function StudentProfile() {
   const load = useCallback(() => {
     Promise.all([api.get('/api/students/profile'), api.get('/api/students/profile/changes')])
       .then(([p, c]) => {
-        setProfile(p.data.data);
+        const prof = p.data.data;
+        const pendingReqs = c.data.data.filter((r) => r.status === 'pending');
+        const latest = pendingReqs[0]?.requestedChanges || {};
+        setProfile(prof);
         setForm({
-          fullName: p.data.data.user.fullName,
-          phone: p.data.data.phone || '',
-          nin: p.data.data.nin || '',
-          level: p.data.data.user.level || 'ND1',
+          fullName: latest.fullName ?? prof.user.fullName,
+          phone: (latest.phone ?? prof.phone) || '',
+          nin: (latest.nin ?? prof.nin) || '',
+          level: (latest.level ?? prof.user.level) || 'ND1',
           reason: '',
         });
         setPending(c.data.data);
