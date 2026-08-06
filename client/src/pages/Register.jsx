@@ -56,7 +56,12 @@ export default function Register() {
         state: { email: form.email, purpose: 'register', message: res.data.message },
       });
     } catch (err) {
-      setError(err.response?.data?.message || 'Registration failed. Please try again.');
+      const data = err.response?.data;
+      if (data?.errors?.length) {
+        setError(data.errors.map((e) => e.msg).join('. '));
+      } else {
+        setError(data?.message || 'Registration failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -154,6 +159,9 @@ export default function Register() {
               onChange={handleChange}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-dspz-blue focus:outline-none"
             />
+            <p className="mt-1 text-xs text-slate-400">
+              At least 8 characters, with a lowercase letter, an uppercase letter, and a number.
+            </p>
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Confirm password</label>
