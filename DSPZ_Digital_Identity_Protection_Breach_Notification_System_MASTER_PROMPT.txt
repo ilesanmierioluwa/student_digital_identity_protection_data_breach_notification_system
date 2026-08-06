@@ -1,0 +1,572 @@
+================================================================================
+MASTER IMPLEMENTATION PROMPT (CODEX / OPENCODE READY)
+PROJECT: AN INTELLIGENT WEB-BASED STUDENT DIGITAL IDENTITY PROTECTION AND
+DATA BREACH NOTIFICATION SYSTEM
+CASE STUDY: DELTA STATE POLYTECHNIC, OTEFE-OGHARA
+================================================================================
+
+
+
+1Vq33Uj7YPQvFT7d
+
+HOW TO USE THIS FILE
+--------------------------------------------------------------------------------
+Paste this entire file into Codex / OpenCode / Claude Code as a single system
+prompt, OR feed it phase-by-phase (Phase 1, Phase 2, ...) if the agent has a
+small context window. Each phase is self-contained and builds on the previous
+one. Do not skip the "SCENARIOS TO COVER" section — it is the grading rubric
+in disguise and maps directly to defense questions.
+
+================================================================================
+1. PROJECT SUMMARY (for the agent's understanding)
+================================================================================
+Build a full-stack web application that:
+1. Manages student digital identities (registration, verification, profile,
+   documents) for a polytechnic.
+2. Actively protects that identity data using encryption, access control,
+   anomaly detection, and audit logging.
+3. Detects and simulates data breach scenarios (unauthorized access, brute
+   force, leaked credential reuse, suspicious data export, mass record
+   scraping) and automatically notifies affected students + admins.
+4. Gives the IT/Security Admin a dashboard to monitor risk, view breach
+   incidents, and manage responses (lock accounts, force password reset,
+   revoke sessions).
+
+This is explicitly a SECURITY-FOCUSED system, not just a CRUD student portal.
+The "intelligence" in the title refers to rule-based + lightweight
+statistical anomaly detection (not necessarily deep learning) that flags
+suspicious behaviour and triggers the breach-notification pipeline.
+
+IMPORTANT — INSTITUTIONAL STRUCTURE NOTE:
+The system is single-tenant: it belongs to ONE institution, Delta State
+Polytechnic, Otefe-Oghara. The institution name is therefore NEVER a field
+on any registration or profile form — it is fixed/implied throughout the
+system (hardcode it in the UI header/branding, README, and generated PDFs/
+emails, not in a database field the user fills in).
+
+Polytechnics in Nigeria use "SCHOOL" as the top-level academic division
+(equivalent to what universities call a "Faculty"). This system therefore
+has a two-tier academic hierarchy that the ADMIN sets up and manages —
+students and officers do NOT create Schools or Departments, they only
+select from what already exists:
+
+  SCHOOL (top level, e.g. "School of Applied Sciences",
+          "School of Engineering Technology", "School of Business Studies")
+    -> DEPARTMENT (belongs to exactly one School, e.g. "Computer Science"
+          belongs to "School of Applied Sciences")
+      -> STUDENT / OFFICER (belongs to exactly one Department, and by
+          extension one School)
+
+This hierarchy must be modeled as real, related collections (Section 4),
+not free-text strings, so it can be managed, validated, and reported on.
+
+================================================================================
+2. CONFIRMED TECH STACK
+================================================================================
+Backend:        Node.js + Express.js
+Database:       MongoDB Atlas (Mongoose ODM)
+Frontend:       React (Vite) + Tailwind CSS
+File storage:   Cloudinary (student photo, ID document uploads)
+Email/Notify:   Brevo HTTP API (NEVER SMTP — use https://api.brevo.com/v3/smtp/email)
+Auth:           JWT (access + refresh token pattern) + bcrypt password hashing
+2FA:            TOTP (speakeasy / otplib) OR email OTP via Brevo — implement email OTP
+                as primary (simpler to defend), TOTP as an optional "advanced" toggle
+Encryption:     AES-256-GCM for sensitive fields at rest (matric number, NIN/BVN if
+                collected, phone number) using Node's built-in `crypto` module
+Logging:        Winston (application logs) + a dedicated Mongo `AuditLog` collection
+                (security/audit trail — this is separate from Winston logs)
+Rate limiting:  express-rate-limit + a custom "suspicious activity" counter in Mongo
+Deployment:     Backend -> Render | Frontend -> Vercel
+Env management: dotenv, with a documented `.env.example`
+
+Do NOT introduce Prisma, PostgreSQL, Firebase, or any stack not listed above.
+
+================================================================================
+3. USER ROLES & PERMISSIONS MATRIX
+================================================================================
+Role: STUDENT
+  - Register with matric number + institutional/personal email
+  - Verify email via OTP before account is active
+  - Complete/verify digital identity profile (bio-data, passport photo,
+    ID document upload to Cloudinary)
+  - View their own audit trail ("Who accessed my data and when")
+  - Receive breach notifications concerning their own data
+  - Change password, enable/disable 2FA, view active sessions, revoke a
+    session (e.g. "log out this device")
+  - Submit a "Report Suspicious Activity" ticket
+
+Role: DEPARTMENT/RECORDS OFFICER (staff who legitimately need student data)
+  - Assigned by the Admin to exactly ONE Department (and therefore one
+    School) at account-creation time — an officer never chooses or edits
+    their own department assignment
+  - View student records within their assigned department only (data
+    minimization / least-privilege — this is a key exam talking point);
+    query filters must enforce departmentId server-side, never trust a
+    department value sent from the client
+  - Every view/export is logged to AuditLog
+  - Cannot delete records, cannot manage Schools/Departments, cannot view
+    system-wide security dashboard
+
+Role: IT / SECURITY ADMIN (superuser)
+  - Full CRUD on Schools and Departments (create a School, create a
+    Department under a chosen School, rename/deactivate either — deactivating
+    a School cascades a "review needed" flag onto its Departments rather
+    than silently orphaning them)
+  - Full CRUD on students and staff accounts
+  - View system-wide Security Dashboard: active sessions, failed login heatmap,
+    flagged anomalies, open breach incidents
+  - Configure breach detection thresholds (e.g. failed logins before lockout)
+  - Trigger/resolve a "Breach Incident" record, which fires bulk notifications
+    to all affected students via Brevo
+  - Force logout / force password reset on any account
+  - Review and export audit logs (with its own logging, i.e. "who audited
+    the audit log" — mention this in your defense, examiners love it)
+  - Manage department officer accounts and their department scope
+
+================================================================================
+4. DATABASE SCHEMA (Mongoose Models)
+================================================================================
+
+--- School (NEW — top-level academic division, admin-managed only) ---
+{
+  _id, name (unique, e.g. "School of Applied Sciences"), code (short unique
+    tag, e.g. "SAS"), isActive: Boolean, createdBy (admin userId),
+  createdAt, updatedAt
+}
+NOTE: There is no "Institution" collection and no institution field anywhere
+in this schema — Delta State Polytechnic, Otefe-Oghara is the fixed, single
+tenant of this deployment and is hardcoded in branding/config, not stored
+per-record.
+
+--- Department (NEW — belongs to exactly one School, admin-managed only) ---
+{
+  _id, name (e.g. "Computer Science"), code (e.g. "CSC"),
+  schoolId (ref: School, required, indexed),
+  isActive: Boolean, needsReview: Boolean (set true automatically if parent
+    School is deactivated, so nothing silently orphans),
+  createdBy (admin userId), createdAt, updatedAt
+}
+Compound unique index on (schoolId, name) so two Schools can each have their
+own "Computer Science" department without collision if that ever happens.
+
+--- User (base, discriminator pattern: Student / Officer / Admin) ---
+{
+  _id, role: enum['student','officer','admin'],
+  fullName, email (unique, lowercase),
+  passwordHash,
+  matricNumber (students only, unique, sparse index),
+  departmentId (ref: Department — required for student & officer, absent
+    for admin; NEVER a free-text string, always a real reference so School
+    can be derived via populate rather than duplicated on every user),
+  level (students only, e.g. "ND1","ND2","HND1","HND2"),
+  phoneEncrypted, ninEncrypted (optional, AES-256-GCM, only if institution
+    actually collects NIN — otherwise omit; mention the omission decision in
+    Chapter 3 as a privacy-by-design choice),
+  photoUrl, idDocumentUrl (Cloudinary secure_url),
+  isEmailVerified: Boolean,
+  isActive: Boolean,               // false when locked by admin/system
+  twoFactorEnabled: Boolean,
+  twoFactorSecret: String (encrypted, only if TOTP used),
+  failedLoginAttempts: Number,
+  lockUntil: Date,
+  passwordChangedAt: Date,
+  refreshTokenHash: String,        // hashed, rotated on each refresh
+  createdAt, updatedAt
+}
+Mongoose validation: on save, if role is 'student' or 'officer', departmentId
+is required; if role is 'admin', departmentId must be absent/null. Enforce
+this in a pre-save hook, not just at the API layer.
+
+--- OtpCode ---
+{ userId, codeHash, purpose: enum['register','login','reset'], expiresAt, used: Boolean }
+
+--- Session ---
+{ userId, deviceInfo, ipAddress, userAgent, refreshTokenHash,
+  createdAt, lastActiveAt, isRevoked: Boolean, revokedReason }
+
+--- AuditLog ---
+{ actorUserId, actorRole, action: enum['VIEW_RECORD','EXPORT_RECORD',
+  'LOGIN_SUCCESS','LOGIN_FAILURE','PASSWORD_CHANGE','ROLE_CHANGE',
+  'ACCOUNT_LOCKED','ACCOUNT_UNLOCKED','DOCUMENT_UPLOAD','ADMIN_ACTION'],
+  targetUserId, ipAddress, userAgent, metadata: Object, timestamp }
+
+--- BreachIncident ---
+{ title, description, severity: enum['low','medium','high','critical'],
+  detectionMethod: enum['manual','rule_engine','rate_limit_trigger'],
+  affectedUserIds: [ObjectId],
+  status: enum['open','investigating','contained','notified','resolved'],
+  detectedAt, resolvedAt, resolvedBy, notificationsSentAt }
+
+--- AnomalyFlag ---
+{ userId, type: enum['MULTIPLE_FAILED_LOGINS','LOGIN_NEW_LOCATION',
+  'IMPOSSIBLE_TRAVEL','BULK_EXPORT_ATTEMPT','OFF_HOURS_ACCESS'],
+  score: Number, details: Object, reviewed: Boolean, createdAt }
+
+--- SecurityTicket ---
+{ reportedBy, category, description, status: enum['open','in_review','closed'],
+  adminNotes, createdAt, closedAt }
+
+================================================================================
+5. SCENARIOS TO COVER (THIS IS THE CORE OF THE PROJECT — DO NOT SKIP ANY)
+================================================================================
+Group A — Identity Lifecycle
+  A0. Admin sets up the academic structure FIRST, before any student can
+      register: create School(s) -> create Department(s) under each School.
+      This must exist as its own admin-only UI (Section 6/7) and is a
+      hard prerequisite — the student registration form's Department
+      dropdown is populated live from this data, it is never hardcoded in
+      the frontend.
+  A1. New student self-registers -> fills fullName, email, matricNumber,
+      password, and picks their Department from a dropdown (which shows the
+      parent School as a subtitle/group label, e.g. "Computer Science —
+      School of Applied Sciences") -> OTP email verification -> profile
+      setup (photo + ID doc upload) -> "pending admin approval" or
+      auto-active (decide one, document the choice).
+      NOTE: the registration form has NO "Institution" field of any kind —
+      the institution is fixed to Delta State Polytechnic, Otefe-Oghara and
+      is only ever shown as read-only branding/header text, never collected
+      as input.
+  A2. Admin creates Officer accounts directly (officers are not
+      self-registering) and assigns each officer to exactly one Department
+      at creation time; issue a temp password, force change on first login.
+  A2b. Officer/Admin bulk-imports students via CSV, where the CSV's
+      "department" column is validated against existing Department codes
+      (reject rows with an unknown department code rather than silently
+      creating a mismatched record)
+  A3. Student updates profile -> changes flagged fields require re-verification
+      by an officer of their own department before taking effect (prevents
+      silent identity tampering)
+  A4. Account deactivation on graduation/withdrawal (soft delete, data retained
+      per institutional policy but access revoked)
+  A5. Admin deactivates a School -> all child Departments automatically get
+      needsReview: true and surface in a "Needs Review" admin widget, rather
+      than being silently deactivated or orphaned
+
+Group B — Authentication & Access Control
+  B1. Normal login with correct credentials
+  B2. Login with wrong password -> increment failedLoginAttempts -> after N
+      attempts (configurable, default 5) -> temporary lockUntil + AuditLog
+      entry + AnomalyFlag('MULTIPLE_FAILED_LOGINS')
+  B3. Login attempt on a locked account -> clear error + notify user by email
+      "someone tried to access your account"
+  B4. 2FA challenge on login (OTP or TOTP)
+  B5. Session management: list active sessions with device/IP, revoke one or
+      "log out everywhere"
+  B6. Refresh token rotation + reuse detection (if an old refresh token is
+      reused after rotation, treat as compromised -> revoke ALL sessions for
+      that user + raise a BreachIncident automatically)
+  B7. Role-based route guards on both frontend (route protection) and backend
+      (middleware) — must test that officer cannot hit admin-only endpoints
+      even by calling the API directly (Postman test case for the paper)
+
+Group C — Data Protection in Transit & At Rest
+  C1. All sensitive fields (matric-linked identifiers, phone, any national ID
+      number) encrypted with AES-256-GCM before saving; decrypt only on
+      authorized read, with the decryption action itself logged
+  C2. Passwords never stored in plain text (bcrypt, cost factor 12)
+  C3. HTTPS enforced in production (Render/Vercel provide this — document it)
+  C4. Helmet.js for HTTP security headers, CORS locked to the known frontend
+      origin only
+  C5. Input validation/sanitization on every endpoint (express-validator) to
+      prevent NoSQL injection via crafted MongoDB query objects
+
+Group D — Breach Detection ("Intelligent" layer)
+  D1. Rule-based anomaly engine runs on login events: flags impossible
+      travel (two logins from geographically distant IPs within an
+      unrealistic time window — use a free IP-geolocation lookup or a stubbed
+      mock service), off-hours access (e.g. 12am–5am if institution has no
+      night operations), and bulk record access by an officer in a short
+      window (e.g. viewing >30 student records in 5 minutes)
+  D2. Each rule produces an AnomalyFlag with a numeric risk score; scores
+      above a threshold auto-escalate to a BreachIncident
+  D3. Admin can also manually create a BreachIncident (e.g. reported by a
+      third party, or a lost staff laptop scenario)
+  D4. Simulated "credential stuffing" scenario for demo purposes: a seed
+      script that fires N failed logins from N different IPs against a demo
+      account to visibly trigger the pipeline live during defense
+
+Group E — Breach Notification Pipeline
+  E1. On BreachIncident creation/escalation -> queue notification job ->
+      Brevo HTTP API sends a templated email to every affected student
+      (never SMTP)
+  E2. Notification content must NOT leak sensitive detail (no exposing what
+      specific data was viewed) but must give: what happened (generic),
+      what data may be affected, what the institution is doing, what the
+      student should do (change password, enable 2FA)
+  E3. Retry logic if Brevo API call fails (log failure, do not silently drop)
+  E4. Admin dashboard shows notificationsSentAt + a per-recipient delivery
+      status table
+  E5. In-app notification bell in addition to email (so the demo works even
+      without checking an inbox live)
+
+Group F — Audit & Accountability
+  F1. Every VIEW, EXPORT, LOGIN, LOGOUT, ROLE_CHANGE, ACCOUNT_LOCK/UNLOCK
+      writes an AuditLog row with actor, target, IP, timestamp
+  F2. Student-facing "who viewed my record" self-service page (transparency
+      feature — good talking point for chapter 2 literature justification)
+  F3. Admin audit log viewer with filters (by user, by action, by date range)
+      and CSV export (the export itself is also logged — logging the logger)
+
+Group G — Non-Functional / Edge Cases
+  G1. Rate limiting on login and OTP endpoints (prevent brute force at the
+      network layer, separate from the account-lock rule)
+  G2. Expired OTP handling, resend-OTP with cooldown (60s) to prevent spam
+  G3. Cloudinary upload failure handling (network error, oversized file,
+      wrong file type — restrict to jpg/png/pdf, max 5MB)
+  G4. Mongoose duplicate key errors (duplicate email/matric number) returned
+      as clean 409 responses, not raw Mongo errors
+  G5. Graceful 500 handling + централized error middleware (no stack traces
+      leaked to client in production)
+  G6. Empty-state UI for dashboards with zero incidents/records
+  G7. Pagination on all list endpoints (students, audit logs, incidents)
+
+================================================================================
+6. FOLDER STRUCTURE
+================================================================================
+/server
+  /config        db.js, cloudinary.js, brevo.js
+  /models        User.js, School.js, Department.js, OtpCode.js, Session.js,
+                 AuditLog.js, BreachIncident.js, AnomalyFlag.js,
+                 SecurityTicket.js
+  /middleware    auth.js (JWT verify + role guard), rateLimiter.js,
+                 auditLogger.js, errorHandler.js, validators.js
+  /controllers   authController.js, studentController.js, officerController.js
+                 adminController.js, securityController.js, breachController.js,
+                 academicStructureController.js (School + Department CRUD)
+  /services      encryptionService.js (AES-256-GCM helpers),
+                 anomalyEngine.js (rule engine, cron-triggered),
+                 notificationService.js (Brevo wrapper),
+                 tokenService.js (JWT + refresh rotation)
+  /routes        auth.routes.js, student.routes.js, admin.routes.js,
+                 security.routes.js, academicStructure.routes.js
+                 (public GET for the registration dropdown; admin-only for
+                 POST/PUT/DELETE)
+  /utils         logger.js (Winston), geoLookup.js
+  /jobs          anomalyScanJob.js (node-cron, runs every N minutes)
+  server.js, app.js, .env.example
+
+/client (Vite React + Tailwind)
+  /src
+    /pages       Login, Register, VerifyOtp, StudentDashboard, ProfileSetup,
+                 OfficerDashboard, AdminDashboard, SecurityDashboard,
+                 AcademicStructureManager (admin: create/manage Schools and
+                 Departments), AuditLogViewer, BreachIncidentDetail,
+                 SessionsManager, ReportTicket, NotFound
+    /components  RoleProtectedRoute, Navbar, Sidebar, StatCard, DataTable,
+                 RiskBadge, NotificationBell, TwoFactorModal
+    /context     AuthContext.jsx
+    /services    api.js (axios instance with refresh-token interceptor)
+    /hooks       useAuth.js, useAuditLog.js
+  tailwind.config.js, vite.config.js, .env.example
+
+================================================================================
+7. PHASED BUILD ORDER (give the agent one phase at a time if context is tight)
+================================================================================
+
+PHASE 0 — Scaffolding
+- Init server (Express, dotenv, Mongoose connection to Atlas), init client
+  (Vite React + Tailwind). Set up .env.example for both. Set up CORS,
+  Helmet, Winston logger, centralized error handler. Git repo + .gitignore.
+
+PHASE 1 — Academic Structure + Auth & Identity Core
+- School model + Department model + academicStructureController (admin-only
+  create/update/deactivate, plus a public read-only GET used to populate the
+  registration dropdown). Seed one admin account directly in the database
+  (never via a public register endpoint — admin accounts are never
+  self-registered).
+- Admin logs in -> creates at least one School -> creates at least one
+  Department under it, BEFORE student registration is testable end-to-end.
+- User model with discriminators (department required for student/officer,
+  absent for admin), register/login/logout, bcrypt hashing, JWT
+  access+refresh with rotation, email OTP verification via Brevo,
+  RoleProtectedRoute on frontend + role middleware on backend.
+- Deliverable: admin can manage Schools/Departments; a student can then
+  register by selecting an existing Department (no institution field
+  anywhere on the form), verify OTP, log in, and see a bare dashboard.
+
+PHASE 2 — Profile & Document Management
+- Profile completion form, Cloudinary upload (photo + ID doc), officer
+  "verify profile" workflow, encryptionService for sensitive fields.
+- Deliverable: full identity record lifecycle (Group A scenarios).
+
+PHASE 3 — Sessions, Lockouts, 2FA
+- Session model + "active sessions" UI + revoke, failed-login lockout logic,
+  refresh-token reuse detection -> auto breach trigger, OTP-based 2FA toggle.
+- Deliverable: Group B scenarios fully working; write Postman tests proving
+  officer cannot access admin routes.
+
+PHASE 4 — Audit Logging
+- auditLogger middleware wired into every controller action that touches
+  student data, AuditLogViewer page (admin) + "who viewed my record"
+  (student), CSV export with its own audit entry.
+- Deliverable: Group F scenarios.
+
+PHASE 5 — Anomaly Engine & Breach Incidents
+- anomalyEngine service + anomalyScanJob cron, AnomalyFlag creation,
+  auto-escalation to BreachIncident above threshold, manual incident
+  creation by admin, SecurityDashboard UI (risk heatmap, open incidents).
+- Deliverable: Group D scenarios + seed script simulating credential
+  stuffing for live demo.
+
+PHASE 6 — Notification Pipeline
+- notificationService wrapping Brevo HTTP API (never SMTP), templated
+  breach-notification email, in-app NotificationBell, delivery-status
+  tracking per BreachIncident, retry-on-failure logic.
+- Deliverable: Group E scenarios.
+
+PHASE 7 — Hardening & Edge Cases
+- Rate limiting on auth/OTP routes, input validation everywhere, Mongoose
+  duplicate-key -> 409 mapping, upload validation, pagination on all list
+  endpoints, empty states, production error handling.
+- Deliverable: Group C and Group G scenarios.
+
+PHASE 8 — Deployment
+- Deploy backend to Render (env vars, health check route), frontend to
+  Vercel (VITE_API_URL pointed at Render URL), confirm HTTPS end to end,
+  confirm CORS works cross-origin in production.
+
+================================================================================
+8. TESTING CHECKLIST (attach to Chapter 4 / System Testing)
+================================================================================
+[ ] Non-admin roles cannot reach School/Department create/update/delete
+      endpoints (403)
+[ ] Registration form's Department dropdown only shows active Departments,
+      grouped by their parent School, and rejects an unknown departmentId
+      sent directly to the API
+[ ] Deactivating a School flips needsReview=true on its child Departments
+      instead of deleting/orphaning them
+[ ] Register -> OTP -> verify -> login happy path
+[ ] Wrong OTP, expired OTP, resend cooldown
+[ ] 5 failed logins -> account lock -> notification email sent
+[ ] Login on locked account rejected with correct message
+[ ] Refresh token reuse triggers session-wide revocation + BreachIncident
+[ ] Officer cannot reach /api/admin/* even with valid officer JWT (403)
+[ ] Student cannot view another student's record (403/404, not data leak)
+[ ] Cloudinary upload: wrong file type rejected, >5MB rejected
+[ ] Duplicate email/matric registration returns clean 409
+[ ] Anomaly engine flags off-hours login (mock system clock in test)
+[ ] Anomaly engine flags bulk export by officer
+[ ] BreachIncident creation fires Brevo email to all affected students
+      (verify via Brevo dashboard/test inbox)
+[ ] Brevo API failure is retried and logged, not silently dropped
+[ ] AuditLog entry exists for every VIEW/EXPORT/LOGIN/LOGOUT/ADMIN action
+[ ] Admin audit export itself creates an audit entry
+[ ] Pagination works on students list, audit log, incidents list
+[ ] All list/table pages render a sane empty state with zero records
+[ ] HTTPS enforced in deployed environment (no mixed content warnings)
+
+================================================================================
+9. FIVE-CHAPTER ACADEMIC PAPER GUIDANCE
+================================================================================
+Chapter 1 — Introduction
+  Background: paper-based -> automated systems -> the overlooked gap of
+  SECURITY in automated student information systems (this is your problem
+  statement — most existing polytechnic systems digitize records but ignore
+  identity protection and breach response).
+  Aim: design and implement an intelligent web-based system that protects
+  student digital identity and notifies stakeholders promptly on breach.
+  Objectives (map 1:1 to Groups A–G above), Significance, Scope, Limitations
+  (state clearly: rule-based anomaly detection, not deep-learning; IP
+  geolocation may use a free-tier API with reduced precision).
+
+Chapter 2 — Literature Review
+  Cover: evolution of student information systems, data protection
+  principles (confidentiality, integrity, availability - CIA triad),
+  relevant law/policy (Nigeria Data Protection Act 2023 — NDPA — cite it
+  since this is a Nigerian case study and it strengthens the paper
+  significantly), prior academic works on breach detection/anomaly systems,
+  gap analysis showing why existing polytechnic portals don't address this.
+
+Chapter 3 — Methodology & System Design
+  Methodology: Object-Oriented Analysis and Design (OOAD) or Agile — pick
+  one and justify. Include: Use Case Diagrams (one per role), ER Diagram
+  (from the schema in Section 4), Sequence Diagrams (login+2FA flow, breach
+  detection+notification flow — these two are the most defensible ones),
+  Data Flow Diagram (Level 0 and 1), system architecture diagram (React SPA
+  -> Express REST API -> MongoDB Atlas, with Cloudinary and Brevo as
+  external services). Justify tech choices (Section 2) briefly.
+
+Chapter 4 — Implementation & Testing
+  Describe each module using the phases in Section 7, include screenshots
+  per phase, present the testing checklist (Section 8) as a formal test
+  table with Test Case ID, Expected Result, Actual Result, Pass/Fail.
+
+Chapter 5 — Summary, Conclusion, Recommendation
+  Summarize achievement against objectives, state limitations honestly,
+  recommend future work (e.g. ML-based anomaly scoring, integration with
+  institutional single sign-on, mobile app).
+
+================================================================================
+10. DEFENSE Q&A PREP (common panel questions)
+================================================================================
+Q: Why is this different from a normal student portal?
+A: It treats identity data protection as a first-class feature, not an
+   afterthought — encryption at rest, audit trails, anomaly detection, and
+   an automated notification pipeline are core modules, not add-ons.
+
+Q: What makes it "intelligent"?
+A: A rule-based anomaly engine that scores login/access events against
+   multiple heuristics (failed logins, off-hours access, impossible travel,
+   bulk export) and auto-escalates high-risk events into breach incidents
+   without manual review — this is explicitly scoped as rule-based, with
+   machine-learning scoring named as future work.
+
+Q: Why MongoDB over a relational DB for identity data?
+A: Flexible schema suits varied document types (profiles, logs, flags)
+   without heavy migrations during iterative development; trade-off
+   (weaker native relational integrity) is mitigated with Mongoose schema
+   validation and application-level referential checks — be ready to name
+   this trade-off yourself before the panel does.
+
+Q: How do you protect the encryption key itself?
+A: Stored only in environment variables on the server (never in the
+   repository or the database), loaded at runtime; acknowledge that a
+   production-grade system would use a dedicated secrets manager/HSM/KMS,
+   named explicitly as a limitation and future work item.
+
+Q: What happens if Brevo is down during a real breach?
+A: Retry logic with logging plus the in-app notification bell as a
+   redundant channel, so notification isn't a single point of failure.
+
+Q: Is this compliant with any law?
+A: Reference the Nigeria Data Protection Act 2023 principles (lawfulness,
+   purpose limitation, data minimization, security safeguards, breach
+   notification duty) as the regulatory basis motivating the design —
+   verify the current NDPA breach-notification timeline requirement before
+   your defense in case guidance has been updated since this was written.
+
+================================================================================
+11. SEED DATA SUGGESTIONS
+================================================================================
+- 1 admin account (fixed credentials, documented in README for demo — seeded
+  directly, no public admin registration route exists)
+- 2–3 Schools (e.g. School of Applied Sciences, School of Engineering
+  Technology, School of Business Studies)
+- 3–4 Departments distributed across those Schools (e.g. Computer Science
+  and Statistics under School of Applied Sciences; Electrical/Electronics
+  Engineering under School of Engineering Technology)
+- 2 department officer accounts, each assigned to a different Department
+  (to demo department-scoped access control)
+- 8–10 student accounts spread across at least 3 Departments/levels, each
+  registered by selecting a Department (never typing free text)
+- A seed script `seedBreachDemo.js` that fires simulated failed logins from
+  varied fake IPs against one demo student account, to trigger the anomaly
+  engine live in front of the panel
+
+================================================================================
+12. ENV VARIABLES CHECKLIST
+================================================================================
+Server .env:
+  PORT, MONGO_URI, JWT_ACCESS_SECRET, JWT_REFRESH_SECRET,
+  JWT_ACCESS_EXPIRES, JWT_REFRESH_EXPIRES, AES_ENCRYPTION_KEY (32 bytes),
+  CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET,
+  BREVO_API_KEY, BREVO_SENDER_EMAIL, BREVO_SENDER_NAME,
+  CLIENT_ORIGIN (for CORS), FAILED_LOGIN_LIMIT (default 5),
+  LOCKOUT_DURATION_MINUTES (default 15)
+
+Client .env:
+  VITE_API_URL
+
+================================================================================
+END OF MASTER PROMPT
+================================================================================
