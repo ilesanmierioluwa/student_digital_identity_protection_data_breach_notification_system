@@ -34,7 +34,10 @@ api.interceptors.response.use(
         return api(original);
       } catch (refreshError) {
         processQueue(refreshError);
-        window.location.href = '/login';
+        const publicPaths = ['/login', '/register', '/verify-otp', '/'];
+        if (!publicPaths.includes(window.location.pathname)) {
+          window.location.href = '/login';
+        }
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;

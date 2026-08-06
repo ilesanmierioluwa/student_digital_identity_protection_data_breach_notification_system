@@ -1,0 +1,198 @@
+================================================================================
+ USER GUIDE — Student Digital Identity Protection & Data Breach Notification
+                 System (Delta State Polytechnic, Otefe-Oghara)
+================================================================================
+
+1. WHAT THIS PROJECT IS
+--------------------------------------------------------------------------------
+The Student Digital Identity Protection & Data Breach Notification System is a
+web application that protects student digital identities and responds to data
+breaches. It was designed and built for Delta State Polytechnic, Otefe-Oghara.
+
+It protects students in four ways:
+  a) IDENTITY PROTECTION
+     - Sensitive fields (phone, national ID) are encrypted at rest using
+       AES-256-GCM. Nobody can read them from the database.
+     - Students register with their matric number and a department from a
+       live dropdown (never free text), then verify their email with a
+       6-digit OTP code.
+     - Passwords are hashed with bcrypt (cost 12) - never stored in plain text.
+  b) BREACH DETECTION  (the "intelligent" layer)
+     - A rule-based anomaly engine watches login events and flags:
+         - Off-hours access (e.g. 00:00 - 05:00)
+         - Impossible travel (two logins from far-apart locations too quickly)
+         - Bulk record access by an officer (e.g. 30+ record views in 5 minutes)
+         - Multiple failed logins / credential stuffing
+     - Every flag gets a risk score. Scores above a threshold automatically
+       escalate into a Breach Incident.
+  c) BREACH NOTIFICATION
+     - When a Breach Incident is raised (automatically or manually by an
+       admin), every affected student is notified by a templated Brevo email
+       AND by an in-app notification bell. The email never leaks what data
+       was viewed - it tells the student what to do (change password, enable
+       2FA) and what the institution is doing.
+  d) ACCOUNTABILITY
+     - Every VIEW, EXPORT, LOGIN, LOGOUT, lock/unlock and admin action is
+       written to an audit log with actor, target, IP and timestamp.
+     - Students can see "Who viewed my record".
+     - The admin audit export is itself logged ("logging the logger").
+
+2. WHO USES IT
+--------------------------------------------------------------------------------
+  - STUDENT  : registers, manages their identity profile, uploads photo + ID
+               document, enables 2FA, manages sessions, sees who viewed them.
+  - OFFICER  : a department officer who verifies student records in their own
+               department only, reviews pending profile changes, and exports
+               department data.
+  - ADMIN    : manages Schools & Departments, students and officers, imports
+               students from CSV, reviews the Security Dashboard, raises and
+               resolves Breach Incidents, and exports audit logs.
+
+3. TECHNOLOGY STACK
+--------------------------------------------------------------------------------
+  Backend  : Node.js + Express 5, MongoDB Atlas + Mongoose 9
+  Security : JWT access + rotating refresh tokens (httpOnly cookie), email OTP
+             2FA, AES-256-GCM field encryption, bcrypt-12, Helmet, rate limiting
+  Files    : Cloudinary (photo + ID document uploads)
+  Email    : Brevo HTTP API (never SMTP)
+  Frontend : React 19 + Vite 6 + Tailwind CSS 3
+  Deployed : Frontend on Vercel, Backend on Render, HTTPS end-to-end
+
+4. HOW TO RUN LOCALLY
+--------------------------------------------------------------------------------
+  Prereq : Node.js 20+, MongoDB Atlas connection string, Cloudinary account,
+           Brevo API key.
+
+  Backend (server/):
+    cp .env.example .env        # fill in real values
+    npm install
+    npm run seed                # optional: load demo data
+    npm run dev                 # starts on http://localhost:5000
+
+  Frontend (client/):
+    cp .env.example .env        # VITE_API_URL=http://localhost:5000
+    npm install
+    npm run dev                 # starts on http://localhost:5173
+
+  Open http://localhost:5173 - the Vite dev server proxies /api to :5000.
+
+5. DEPLOYMENT (IMPORTANT - read before deploying)
+--------------------------------------------------------------------------------
+  Backend -> Render
+    - Set all server/.env values as Render environment variables.
+    - Make sure NODE_ENV=production. This makes the refresh-token cookie
+      `Secure; SameSite=None` so it works cross-site (Vercel -> Render).
+    - Health check: GET /api/health must return {"success":true}.
+
+  Frontend -> Vercel
+    - Set VITE_API_URL to the Render URL, e.g.
+        https://student-digital-identity-protection-data.onrender.com
+    - Build the project so VITE_API_URL is baked into the bundle.
+    - client/vercel.json contains a rewrite for client-side routing.
+
+  PRODUCTION "PAGE KEEPS REFRESHING BY ITSELF" - FIXED
+  ----------------------------------------------------------------------
+  Cause: the refresh-token cookie was SameSite=Lax. Browsers will NOT send a
+  SameSite=Lax cookie on cross-site API calls (Vercel frontend -> Render
+  backend), so every token refresh failed and the app reloaded in a loop.
+
+  Fix (already applied in the code):
+    - Backend: refresh cookie is now SameSite=None + Secure when NODE_ENV
+      is production (authController.js).
+    - Frontend: the axios interceptor no longer forces a reload when the
+      user is already on a public page (services/api.js).
+    - CORS now accepts any origin (app.js) instead of a hardcoded
+      CLIENT_ORIGIN, so the deployed frontend can always reach the backend.
+
+  After pulling this code, REDEPLOY BOTH Render and Vercel.
+
+6. SEEDED ACCOUNTS (demo credentials)
+--------------------------------------------------------------------------------
+  ADMIN
+    Email    : admin@dspz.edu.ng
+    Password : Admin@1234
+
+  OFFICERS  (temporary password Officer@1234 - forced to change on first login)
+    grace.officer@dspz.edu.ng   (Officer Grace Oseghale - Computer Science)
+    samuel.officer@dspz.edu.ng  (Officer Samuel Edokpayi - Electrical/Electronics)
+      Note: Samuel's password was already changed to: SamuelNew@1234
+
+  STUDENTS  (all use password: Student@1234)
+    nd1.csc.001@dspz.edu.ng   (Adaeze Okafor)      - ND/2023/CSC/001
+    nd1.csc.002@dspz.edu.ng   (Tunde Bakare)       - ND/2023/CSC/002
+    nd2.csc.003@dspz.edu.ng   (Ngozi Eze)          - ND/2022/CSC/003
+    nd1.sta.004@dspz.edu.ng   (Ibrahim Suleiman)   - ND/2023/STA/001
+    nd2.sta.005@dspz.edu.ng   (Chiamaka Nwosu)     - ND/2022/STA/002
+    nd1.eee.006@dspz.edu.ng   (Emeka Obi)          - ND/2023/EEE/001
+    nd2.eee.007@dspz.edu.ng   (Fatima Bello)       - ND/2022/EEE/002
+    hnd1.csc.008@dspz.edu.ng  (Kelechi Amadi)      - HND/2023/CSC/001
+    hnd1.acc.009@dspz.edu.ng  (Blessing Adeyemi)   - HND/2023/ACC/001
+    nd1.acc.010@dspz.edu.ng   (Yusuf Abdul)        - ND/2023/ACC/002
+
+  EXTRA TEST ACCOUNTS (created during testing, not in the seed script)
+    demo.student@dspz.edu.ng  / Demo@1234     (used by seedBreachDemo.js)
+    ileseanmierioluwavictor@gmail.com / Student@1234  (manual registration test)
+
+  Reseed anytime (idempotent - existing records are skipped):
+    cd server && npm run seed
+
+7. QUICK TOUR - HOW TO USE EACH ROLE
+--------------------------------------------------------------------------------
+  STUDENT
+    1. Register -> pick your department from the grouped dropdown -> verify
+       email with the 6-digit OTP sent to your inbox.
+    2. My Identity -> upload photo + ID document, keep your profile verified.
+    3. Sessions -> see your active logins, revoke one, or "log out everywhere".
+    4. Enable 2FA -> you'll get an OTP by email at every login.
+    5. Who viewed my record -> see every officer/admin that opened your record.
+    6. If a breach incident affects you, the notification bell + email will
+       tell you to change your password and enable 2FA.
+
+  OFFICER
+    1. First login -> change the temporary password.
+    2. Dashboard -> search/verify students in YOUR department only.
+    3. Review pending profile change requests and approve/reject them.
+    4. The anomaly engine watches for bulk access; repeated quick views of
+       30+ records will raise a BULK_EXPORT_ATTEMPT flag.
+
+  ADMIN
+    1. Schools & Departments -> create the academic structure first.
+    2. Students & Officers -> create officers (temp password), create/import
+       students via CSV, deactivate accounts.
+    3. Audit Logs -> filter and export the audit trail (the export is logged).
+    4. Security Dashboard ->
+         Overview : risk heatmap (failed logins by hour), open incidents,
+                    anomaly breakdown
+         Incidents: create a manual incident, advance its status
+                    (open -> investigating -> contained -> notified -> resolved)
+         Anomalies: review flagged anomalies, mark them as reviewed
+         Settings : tune breach-detection thresholds (they apply immediately)
+    5. Force logout / force password reset any account from the dashboard.
+
+8. BREACH DETECTION THRESHOLDS (defaults, editable in Security Dashboard)
+--------------------------------------------------------------------------------
+    Failed logins before lockout      : 5
+    Lockout duration                  : 15 minutes
+    Anomaly escalation threshold      : score 50
+    Bulk access threshold             : 30 record views
+    Bulk access window                : 5 minutes
+    Off-hours window                  : 00:00 - 05:00 (UTC)
+    Impossible travel distance        : 500 km
+    Impossible travel time window     : 60 minutes
+    Anomaly scan interval             : 2 minutes (cron)
+
+  Risk scores: OFF_HOURS=25, NEW_LOCATION=15, MULTIPLE_FAILED_LOGINS=50,
+               BULK_EXPORT=55, IMPOSSIBLE_TRAVEL=60, REFRESH_TOKEN_REUSE=90.
+
+9. LIVE DEMO SCRIPT (credential-stuffing simulation)
+--------------------------------------------------------------------------------
+  From server/ :
+    node jobs/seedBreachDemo.js
+
+  Fires wrong-password logins from varied fake IPs against the demo student,
+  triggering lockout + MULTIPLE_FAILED_LOGINS flags and an auto-escalated
+  Breach Incident. Watch it happen live on the Security Dashboard.
+
+================================================================================
+END OF USER GUIDE
+================================================================================
