@@ -31,7 +31,12 @@ export default function Login() {
       }
       navigate(`/${res.data.user.role}`);
     } catch (err) {
-      setError(err.response?.data?.message || 'Login failed. Please try again.');
+      const data = err.response?.data;
+      if (data?.errors?.length) {
+        setError(data.errors.map((e) => e.msg).join('. '));
+      } else {
+        setError(data?.message || 'Login failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
