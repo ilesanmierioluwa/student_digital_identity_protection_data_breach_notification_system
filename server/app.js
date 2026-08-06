@@ -18,11 +18,6 @@ if (!fsSync.existsSync(logDir)) fsSync.mkdirSync(logDir, { recursive: true });
 
 const app = express();
 
-const corsOrigin =
-  process.env.NODE_ENV === 'production'
-    ? process.env.CLIENT_ORIGIN.split(',')
-    : [process.env.CLIENT_ORIGIN || 'http://localhost:5173'];
-
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
@@ -30,7 +25,7 @@ app.use(
 );
 app.use(
   cors({
-    origin: corsOrigin,
+    origin: true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
