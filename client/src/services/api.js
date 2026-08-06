@@ -5,6 +5,23 @@ const api = axios.create({
   withCredentials: true,
 });
 
+let accessToken = null;
+
+export const setAccessToken = (token) => {
+  accessToken = token || null;
+};
+
+export const clearAccessToken = () => {
+  accessToken = null;
+};
+
+api.interceptors.request.use((config) => {
+  if (accessToken) {
+    config.headers.Authorization = `Bearer ${accessToken}`;
+  }
+  return config;
+});
+
 let isRefreshing = false;
 let failedQueue = [];
 
@@ -29,11 +46,15 @@ api.interceptors.response.use(
       original._retry = true;
       isRefreshing = true;
       try {
-        await api.post('/api/auth/refresh');
+        const res = await api.post('/api/auth/refresh');
+        if (res.data?.data?.accessToken) {
+          accessToken = res.data.data.accessToken;
+        }
         processQueue(null);
         return api(original);
       } catch (refreshError) {
         processQueue(refreshError);
+        clearAccessToken();
         const publicPaths = ['/login', '/register', '/verify-otp', '/'];
         if (!publicPaths.includes(window.location.pathname)) {
           window.location.href = '/login';

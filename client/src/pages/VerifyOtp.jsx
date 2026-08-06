@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import api from '../services/api';
+import api, { setAccessToken } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 
 export default function VerifyOtp() {
@@ -45,6 +45,7 @@ export default function VerifyOtp() {
       const payload = purpose === 'login' ? { userId, otp, purpose } : { email, otp, purpose };
       const res = await api.post('/api/auth/verify-otp', payload);
       if (purpose === 'login') {
+        setAccessToken(res.data.data.accessToken);
         setUser(res.data.data.user);
         navigate(`/${res.data.data.user.role}`);
       } else {
